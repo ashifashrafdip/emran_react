@@ -323,14 +323,17 @@ note under §9 Risk 1. Decision B stands unchanged.
 |---|---|
 | 1 — Repository audit | **Complete** (this document) |
 | 2 — Next.js architecture | **Complete** |
-| 3 — Database / Prisma schema | **Complete**, pending live introspection (§9 Risk 3) |
+| 3 — Database / Prisma schema | **Complete**, verified — the schema was pushed to a live Neon database and all three reads pass |
 | 4 — Authentication | **Complete**, verified |
-| 5 — Core pages | **Complete**; rendering with real rows unverified |
-| 6 — APIs / Server Actions | **Complete**; write paths unverified |
+| 5 — Core pages | **Complete**, verified — dashboard renders real rows, newest id first |
+| 6 — APIs / Server Actions | **Complete**, verified — both write paths and the JSON endpoint exercised |
 | 7 — UI polish | **Complete**, verified at 375 px and desktop |
-| 8 — Testing checklist | **Complete** — see MIGRATION.md, "Verified" and "Not verified" |
+| 8 — Testing checklist | **Complete** — see MIGRATION.md, "Verified" and "Verified against a real database" |
 | 9 — Vercel deployment | Configuration complete; not yet deployed |
 
-**No existing file has been deleted.** The PHP application was moved intact to
-`legacy-php/` and stays there until the five database operations are verified
-against the real database (MIGRATION.md, "Not verified").
+The PHP application was moved intact to `legacy-php/` and kept there for the
+whole migration. The five database operations have since been verified against a
+real Neon Postgres database (MIGRATION.md, "Verified against a real database"),
+which was the stated condition for deleting it, so the directory has been
+removed. Nothing was deleted before its replacement was proven to work, and git
+history still holds every original file.

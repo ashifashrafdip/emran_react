@@ -46,9 +46,10 @@ something whose purpose is defined outside this repository.
 | `notify.mp3` | `public/notify.mp3` | Same URL |
 | `admin/*` (duplicate copies) | — | Folded into the routes above; the URLs redirect |
 
-The PHP files were **moved**, not deleted — they are in `legacy-php/` with a
-[README](legacy-php/README.md) explaining the condition for removing them.
-`.vercelignore` keeps them out of deployments.
+The PHP files were kept in `legacy-php/` until the database layer had been
+verified against a real database. That has now happened
+([Verified against a real database](#verified-against-a-real-database)), so the
+directory has been deleted. Git history still has it.
 
 ### URL compatibility
 
@@ -180,46 +181,53 @@ Two real bugs were found and fixed this way:
   advisory lock, which PgBouncer in transaction mode cannot hold, so the command
   can hang. The CLI now prefers `DIRECT_URL` while the app keeps the pooled one.
 
-## Not verified
+## Verified against a real database
 
-**No database was reachable during the migration** — there is no Postgres, MySQL,
-or Docker on the machine this was built on. The five operations listed above are
-implemented and type-checked, but none has been executed against a real database.
+For most of the migration no database was reachable, so the five operations were
+implemented and type-checked but never executed. That gap is now closed. They
+were run against a Neon Postgres project (`neondb`, `us-east-1`) on a production
+build (`npm run build && next start`).
 
-This is the reason `legacy-php/` still exists. Do not delete it until the
-checklist below passes.
+Setup: `npm run db:init` created both tables from `prisma/schema.prisma` against
+the unpooled endpoint; `npm run db:seed` inserted three users and two coupons.
 
-### Checklist to run against a real database
+`npm run verify:db` — the three reads, no writes:
 
-Set up a database first — see [db/README.md](db/README.md).
+| Check | Replaces | Result |
+|---|---|---|
+| List users, newest first | `dashboard.php:17` | 3 rows, newest `id=3` |
+| Highest user id | `check_new_user.php:9` | `last_id=3` |
+| Most recent coupon | `dashboard.php:20` | `id=2`, `SUMMER25` |
+
+The writes were exercised through the UI rather than by direct query, because
+those paths include the authorization guard and the cache revalidation that a
+query would skip:
+
+1. **Users table** — signed in; all three rows listed, newest id first (3, 2, 1).
+2. **Timestamps** — the row seeded at `2026-01-02T09:15:00Z` rendered as
+   `2026-01-02 09:15:00`, so the UTC pinning holds.
+3. **Last Coupon panel** — showed `SUMMER25`, the newest row.
+4. **Save a coupon** — submitted `"  tap-Test-99  "` with deliberate surrounding
+   spaces. Stored as `"  tap-Test-99  "`, byte for byte: untrimmed, case intact.
+   The panel updated without a manual refresh.
+5. **Delete a user** — deleted `id=2`; the table re-rendered to (3, 1) and the
+   row was gone from the database.
+6. **`/api/users/latest`** — with a session, `{"last_id":3}` and
+   `content-type: application/json`; without one, 403 with a zero-byte body.
+
+Re-checked in the same pass: `/dashboard` while signed out returns 307 to
+`/login`, wrong credentials render exactly `Wrong username or password`, and
+logout returns to `/login`.
+
+Not exercised: the `No coupon yet` empty state, which needs a `coupons` table
+with no rows. The seed always writes two.
+
+**`legacy-php/` was removed after this pass**, which was the condition set for
+deleting it. It is still in git history. To get it back:
 
 ```bash
-npm run db:init
+git checkout "$(git log --diff-filter=D --format=%H -1 -- legacy-php)~1" -- legacy-php
 ```
-
-```bash
-npm run db:seed
-```
-
-```bash
-npm run verify:db
-```
-
-`verify:db` covers the three reads without writing anything. The writes are
-exercised through the UI instead, because those paths include the authorization
-guard and the cache revalidation that a direct query would skip:
-
-1. Sign in. The users table lists every row, newest id first.
-2. `created_at` renders as `YYYY-MM-DD HH:MM:SS`, and a row seeded at
-   `2026-01-02T09:15:00Z` shows `2026-01-02 09:15:00` on any machine.
-3. The Last Coupon panel shows the newest coupon, or `No coupon yet` if empty.
-4. Save a coupon. It appears in `coupons` with the code stored exactly as typed,
-   untrimmed, and the panel updates without a manual refresh.
-5. Delete a user. The row goes and the table re-renders.
-6. `GET /api/users/latest` with a session returns `{"last_id":<max id>}`, and
-   without one returns 403 with an empty body.
-
-Only after all six pass should `legacy-php/` be removed.
 
 ## Known deviations
 
@@ -231,6 +239,7 @@ Only after all six pass should `legacy-php/` be removed.
 
 ## Rollback
 
-The PHP application is intact in `legacy-php/` with its original two-copy layout,
-and `main` is untouched. Rolling back means deploying the previous PHP host
-again; nothing in this migration has altered the database.
+The PHP application is recoverable from git history with its original two-copy
+layout (see the command above), and `main` is untouched. Rolling back means
+deploying the previous PHP host again against its own MySQL server; nothing in
+this migration has altered that database.

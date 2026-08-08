@@ -123,8 +123,9 @@ CSRF-protected form.
    Use a **new** admin password, not the one from git history.
 3. Deploy. `postinstall` runs `prisma generate` during the build.
 
-The MySQL server must accept connections from Vercel's IP ranges, and should
-require TLS. `legacy-php/` is excluded from deployments by `.vercelignore`.
+`DIRECT_URL` is not needed on Vercel — the build only runs `prisma generate`,
+which never touches the database. Neon requires TLS, which the connection string
+already carries as `sslmode=require`.
 
 ## Project layout
 
@@ -137,7 +138,10 @@ src/
   auth.ts       Auth.js — Node half, holds the Credentials provider
   auth.config.ts  Auth.js — edge-safe half, used by the proxy
   proxy.ts      Route guard (Next 16's name for middleware)
-prisma/         Schema. Read-only against a shared database
-scripts/        verify-db.ts
-legacy-php/     The original PHP, kept for reference. Not deployed
+prisma/         Schema — the single source of truth for both tables
+scripts/        db-seed.ts, verify-db.ts, and their shared helpers
 ```
+
+The original PHP is no longer in the tree. It lived in `legacy-php/` until the
+database layer was verified against a real database, then was deleted; see
+[MIGRATION.md](MIGRATION.md) for how to recover it from git history.
