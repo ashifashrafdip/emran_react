@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
     "verify:db": "tsx scripts/verify-db.ts",
-    "db:pull": "prisma db pull"
+    "db:pull": "prisma db pull",
+    "db:init": "tsx scripts/db-init.ts",
+    "db:seed": "tsx scripts/db-seed.ts"
   },
   "repository": {
     "type": "git",

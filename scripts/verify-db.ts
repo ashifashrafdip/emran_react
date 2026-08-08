@@ -15,66 +15,12 @@
  */
 import "dotenv/config";
 
-import { PrismaMariaDb } from "@prisma/adapter-mariadb";
-
 // Run with `npm run verify:db`, which uses tsx. Node's built-in type stripping
 // is not enough here: the generated Prisma client imports its own modules
 // without file extensions, which bare Node ESM cannot resolve.
 import { PrismaClient } from "../src/generated/prisma/client.ts";
 
-function poolConfigFromUrl(raw: string) {
-  const url = new URL(raw);
-
-  return {
-    host: url.hostname,
-    port: url.port ? Number(url.port) : 3306,
-    user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: url.pathname.replace(/^\//, ""),
-    timezone: "Z",
-    connectionLimit: 2,
-
-    // Match src/lib/prisma.ts. Without these the driver retries for 10s per
-    // query, so an unreachable host cost 30s to report what is knowable at once.
-    connectTimeout: 5_000,
-    acquireTimeout: 6_000,
-  };
-}
-
-/**
- * Reject a DATABASE_URL that was never filled in.
- *
- * `.env.example` ships `mysql://user:password@host:3306/database`. Copying it to
- * `.env` and forgetting to edit it produces a 30s pool timeout that reads like a
- * schema problem, so the unedited template is caught by name here.
- */
-function templateFieldsIn(url: URL): string[] {
-  const untouched: Array<[string, string, string]> = [
-    ["host", url.hostname, "host"],
-    ["user", decodeURIComponent(url.username), "user"],
-    ["password", decodeURIComponent(url.password), "password"],
-    ["database", url.pathname.replace(/^\//, ""), "database"],
-  ];
-
-  return untouched
-    .filter(([, actual, placeholder]) => actual.toLowerCase() === placeholder)
-    .map(([field]) => field);
-}
-
-/** True when the failure is "could not reach the server", not "query is wrong". */
-function isConnectionFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-
-  return (
-    message.includes("pool timeout") ||
-    message.includes("ECONNREFUSED") ||
-    message.includes("ENOTFOUND") ||
-    message.includes("ETIMEDOUT") ||
-    message.includes("EAI_AGAIN") ||
-    message.includes("Access denied") ||
-    message.includes("Unknown database")
-  );
-}
+import { clientFor, isConnectionFailure, preflight, requireDatabaseUrl } from "./db-url.ts";
 
 type Check = {
   name: string;
@@ -123,56 +69,14 @@ const checks: Check[] = [
 ];
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
+  const { raw, url } = requireDatabaseUrl();
 
-  if (!databaseUrl) {
-    console.error("DATABASE_URL is not set. Copy .env.example to .env first.");
-    process.exit(1);
-  }
+  const prisma = clientFor(raw);
 
-  let url: URL;
-  try {
-    url = new URL(databaseUrl);
-  } catch {
-    console.error("DATABASE_URL is not a valid URL.");
-    console.error("  Expected: mysql://USER:PASSWORD@HOST:3306/DATABASE");
-    process.exit(1);
-  }
-
-  const untouched = templateFieldsIn(url);
-
-  if (databaseUrl.includes("placeholder") || untouched.length > 0) {
-    console.error("DATABASE_URL has not been filled in.");
-    if (untouched.length > 0) {
-      console.error(`  Still set to the .env.example template: ${untouched.join(", ")}`);
-    }
-    console.error("");
-    console.error("  Edit .env with the real credentials for the existing MySQL database:");
-    console.error("    DATABASE_URL=\"mysql://USER:PASSWORD@HOST:3306/DATABASE\"");
-    console.error("");
-    console.error("  They are not in this repository — the original config.php shipped");
-    console.error("  placeholders too. Take them from the live site's hosting panel.");
-    process.exit(1);
-  }
-
-  const prisma = new PrismaClient({ adapter: new PrismaMariaDb(poolConfigFromUrl(databaseUrl)) });
-
-  // Preflight. Every schema check below would report the same connection error
-  // three times over, each after its own timeout, and the summary would blame
-  // the schema for it.
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-  } catch (error) {
-    console.error(`  FAIL  Cannot reach the database at ${url.hostname}:${url.port || 3306}`);
-    console.error(`        ${error instanceof Error ? error.message : String(error)}`);
-    console.error("");
-    console.error("  This is a connection problem, not a schema problem. Check that:");
-    console.error("    - the host and port are correct and reachable from this machine");
-    console.error("    - the user, password, and database name are correct");
-    console.error("    - the MySQL server allows connections from this IP");
-    await prisma.$disconnect();
-    process.exit(1);
-  }
+  // Preflight. Every schema check below would otherwise report the same
+  // connection error three times over, each after its own timeout, and the
+  // summary would blame the schema for it.
+  await preflight(prisma, url);
 
   let failed = 0;
   let connectionFailure = false;
