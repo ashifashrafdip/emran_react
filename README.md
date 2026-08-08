@@ -1,8 +1,8 @@
 # Emran Admin Panel
 
 Administrative panel for viewing registered users and publishing coupon codes.
-Originally a PHP + MySQL application; migrated to Next.js while keeping the same
-MySQL database, the same behaviour, and the same look.
+Originally a PHP + MySQL application; migrated to Next.js and Postgres while
+keeping the same behaviour and the same look.
 
 - What the original app did, and every security finding in it: [PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md)
 - What changed, file by file, and how to verify it: [MIGRATION.md](MIGRATION.md)
@@ -14,10 +14,12 @@ this repository's git history.** They must be rotated. Deleting the file does no
 remove them from history — set new values in `ADMIN_USERNAME` / `ADMIN_PASSWORD`
 and treat the old pair as compromised. See PROJECT_ANALYSIS.md §7 finding 1.
 
-**The database is shared with another application.** The `users` table is written
-by a separate signup app that is not in this repository — nothing here ever
-inserts a user. Never run `prisma migrate` or `prisma db push` against it; a
-schema change here would break the other application. See PROJECT_ANALYSIS.md §3.
+**Nothing here creates users.** This panel lists and deletes them; there is no
+`INSERT INTO users` in this repository and there wasn't in the PHP either. In the
+original deployment a separate signup application wrote that table
+(PROJECT_ANALYSIS.md §3). A fresh database therefore starts empty and stays that
+way until something writes to it — that is expected, not a bug. Use
+`npm run db:seed` to put rows in for testing.
 
 ## Stack
 
@@ -26,14 +28,14 @@ schema change here would break the other application. See PROJECT_ANALYSIS.md §
 | Framework | Next.js 16 (App Router, Server Components, Server Actions) |
 | Language | TypeScript, strict |
 | Styling | Tailwind CSS v4 |
-| Database | MySQL, unchanged, via Prisma 7 + `@prisma/adapter-mariadb` |
+| Database | Postgres (Neon) via Prisma 7 + `@prisma/adapter-neon` |
 | Auth | Auth.js v5, Credentials provider, JWT sessions |
 | Hosting | Vercel |
 
 ## Requirements
 
 - Node.js 20.9 or newer
-- Access to the existing MySQL database
+- A Postgres database — see [db/README.md](db/README.md) for the Neon setup
 
 ## Local setup
 
@@ -75,7 +77,8 @@ npm run dev
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | MySQL connection string, `mysql://user:pass@host:3306/db` |
+| `DATABASE_URL` | Postgres connection string, pooled. `postgresql://user:pass@host/db?sslmode=require` |
+| `DIRECT_URL` | Same database, unpooled. Optional; used only by the Prisma CLI |
 | `AUTH_SECRET` | Signs the session cookie. Minimum 16 characters |
 | `ADMIN_USERNAME` | Admin login name. Replaces the constant in `login.php` |
 | `ADMIN_PASSWORD` | Admin password. Replaces the constant in `login.php` |
@@ -93,6 +96,8 @@ git-ignored; `.env.example` is the committed template and holds no real values.
 | `npm start` | Serve the production build |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run db:init` | Create the tables from `prisma/schema.prisma` (`prisma db push`) |
+| `npm run db:seed` | Sample rows for local testing. Refuses to run on non-empty tables |
 | `npm run verify:db` | Read-only check of the three database reads |
 
 ## Routes

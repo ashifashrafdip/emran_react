@@ -250,6 +250,21 @@ MySQL → PostgreSQL cannot be done from this repository alone without breaking 
 
 The one caveat to verify at Phase 2: the MySQL instance must be reachable from Vercel's network. `config.php` points at `localhost`, which suggests the database currently sits on the same host as the PHP app and may not accept remote connections. If it is not externally reachable, the options are to expose it over TLS with an allowlist, or to bring the PostgreSQL move forward — which pulls the sibling app into scope.
 
+> **Resolved after this audit — the move to PostgreSQL went ahead.**
+>
+> The premise of this risk was that live data and a live sibling application had
+> to be kept in step. Neither turned out to apply: the deployment is starting
+> from an empty database with no data to carry over and no signup application to
+> repoint. With nothing on the other side of the integration, the change became
+> contained to this repository, and the caveat above — whether the MySQL host is
+> reachable from Vercel — stopped mattering.
+>
+> Postgres was chosen over MySQL because Vercel's storage partners offer Postgres,
+> Redis, MongoDB, and SQLite, and no MySQL; the alternative was hosting MySQL
+> externally and reaching it over a public TCP proxy. The analysis above stands as
+> written for the case it described: had the sibling application still been live,
+> keeping MySQL would still have been the correct call. See db/README.md.
+
 ### Risk 2 — Plaintext password display. **Blocking for Phase 2.**
 
 Fixing storage (hashing) and preserving the feature (displaying the password) are **mutually exclusive**. This is a genuine product decision with a security consequence, so it is escalated rather than assumed.
@@ -286,7 +301,7 @@ Vercel
 
 | Plan item | Decision | Reason |
 |---|---|---|
-| PostgreSQL now | **Defer**; keep MySQL | Risk 1 — shared DB with an app not in scope. Plan itself allows this. |
+| PostgreSQL now | **Deferred, then adopted** | Risk 1 deferred it while a sibling app shared the database. Once that proved not to apply, Postgres was adopted — Vercel offers no MySQL. |
 | RBAC: User/Admin/Super Admin | **Single admin role** | No multi-role concept exists to preserve; building one is new feature work |
 | File upload / storage provider | **Not applicable** | No uploads exist anywhere in the repo |
 | Payment logic migration | **Not applicable** | No payment code exists anywhere in the repo |
@@ -299,6 +314,10 @@ Vercel
 
 Decisions A and B were answered: **keep MySQL**, and **preserve existing
 behaviour rather than adding improvements**. Both are recorded in MIGRATION.md.
+
+Decision A was later revised to **Postgres on Neon**, once it was established
+that no data and no sibling application had to be carried over — see the resolved
+note under §9 Risk 1. Decision B stands unchanged.
 
 | Phase | Status |
 |---|---|

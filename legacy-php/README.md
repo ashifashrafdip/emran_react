@@ -8,7 +8,7 @@ part of the Next.js migration. They are kept deliberately.
 The migration rule for this project is that **old code is not deleted until its
 replacement has been verified working**. Every route, guard, and redirect has
 been verified (see MIGRATION.md), but the five database-backed operations could
-not be executed during the migration because no MySQL server was reachable.
+not be executed during the migration because no database server was reachable.
 
 Until those pass against the real database, these files remain as the reference
 implementation.
@@ -31,8 +31,8 @@ layout, because both were reachable as URLs on the old server.
 
 ## Before deleting this directory
 
-1. Point `DATABASE_URL` at the real MySQL database.
-2. Run `npm run verify:db` — all three read checks must pass.
+1. Set up a database and point `DATABASE_URL` at it — see `db/README.md`.
+2. Run `npm run db:init`, then `npm run verify:db` — all three reads must pass.
 3. Work through the write checks in MIGRATION.md (delete a user, save a coupon).
 4. Then remove this directory. Git history retains it either way.
 

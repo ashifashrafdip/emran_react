@@ -17,8 +17,8 @@ const envSchema = z.object({
     .string()
     .min(1, "DATABASE_URL is required")
     .refine(
-      (value) => value.startsWith("mysql://") || value.startsWith("mariadb://"),
-      "DATABASE_URL must be a mysql:// connection string",
+      (value) => value.startsWith("postgres://") || value.startsWith("postgresql://"),
+      "DATABASE_URL must be a postgres:// connection string — Neon's is on the project's Connection Details panel",
     ),
   AUTH_SECRET: z
     .string()

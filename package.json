@@ -10,7 +10,7 @@
     "postinstall": "prisma generate",
     "verify:db": "tsx scripts/verify-db.ts",
     "db:pull": "prisma db pull",
-    "db:init": "tsx scripts/db-init.ts",
+    "db:init": "prisma db push",
     "db:seed": "tsx scripts/db-seed.ts"
   },
   "repository": {
@@ -23,7 +23,7 @@
   },
   "homepage": "https://github.com/ashifashrafdip/emranLeatestv4#readme",
   "dependencies": {
-    "@prisma/adapter-mariadb": "^7.9.1",
+    "@prisma/adapter-neon": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

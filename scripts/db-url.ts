@@ -5,35 +5,16 @@
  * validates the full application environment, which is more than a CLI task
  * needs and fails for reasons unrelated to the database.
  */
-import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+import { PrismaNeon } from "@prisma/adapter-neon";
 
 import { PrismaClient } from "../src/generated/prisma/client.ts";
-
-export function poolConfigFromUrl(raw: string) {
-  const url = new URL(raw);
-
-  return {
-    host: url.hostname,
-    port: url.port ? Number(url.port) : 3306,
-    user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: url.pathname.replace(/^\//, ""),
-    timezone: "Z",
-    connectionLimit: 2,
-
-    // Match src/lib/prisma.ts. Without these the driver retries for 10s per
-    // query, so an unreachable host costs far longer to report than it needs to.
-    connectTimeout: 5_000,
-    acquireTimeout: 6_000,
-  };
-}
 
 /**
  * Reject a DATABASE_URL that was never filled in.
  *
- * `.env.example` ships `mysql://user:password@host:3306/database`. Copying it to
- * `.env` and forgetting to edit it produces a pool timeout that reads like a
- * schema problem, so the unedited template is caught by name here.
+ * `.env.example` ships a template. Copying it to `.env` and forgetting to edit
+ * it produces a connection timeout that reads like a schema problem, so the
+ * unedited values are caught by name here instead.
  */
 export function templateFieldsIn(url: URL): string[] {
   const untouched: Array<[string, string, string]> = [
@@ -53,13 +34,13 @@ export function isConnectionFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
 
   return (
-    message.includes("pool timeout") ||
+    message.includes("timeout") ||
     message.includes("ECONNREFUSED") ||
     message.includes("ENOTFOUND") ||
     message.includes("ETIMEDOUT") ||
     message.includes("EAI_AGAIN") ||
-    message.includes("Access denied") ||
-    message.includes("Unknown database")
+    message.includes("password authentication failed") ||
+    message.includes("does not exist")
   );
 }
 
@@ -79,7 +60,16 @@ export function requireDatabaseUrl(): { raw: string; url: URL } {
     url = new URL(raw);
   } catch {
     console.error("DATABASE_URL is not a valid URL.");
-    console.error("  Expected: mysql://USER:PASSWORD@HOST:3306/DATABASE");
+    console.error("  Expected: postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require");
+    process.exit(1);
+  }
+
+  if (!raw.startsWith("postgres://") && !raw.startsWith("postgresql://")) {
+    console.error("DATABASE_URL is not a Postgres connection string.");
+    console.error(`  Got: ${url.protocol}//`);
+    console.error("");
+    console.error("  This app moved from MySQL to Postgres. If this is still an old");
+    console.error("  mysql:// URL, replace it with the Neon one. See db/README.md.");
     process.exit(1);
   }
 
@@ -91,11 +81,10 @@ export function requireDatabaseUrl(): { raw: string; url: URL } {
       console.error(`  Still set to the .env.example template: ${untouched.join(", ")}`);
     }
     console.error("");
-    console.error("  Edit .env with the real credentials for the MySQL database:");
-    console.error('    DATABASE_URL="mysql://USER:PASSWORD@HOST:3306/DATABASE"');
-    console.error("");
-    console.error("  On Railway, copy MYSQL_PUBLIC_URL from the database service's");
-    console.error("  Variables tab. See db/README.md.");
+    console.error("  Paste the connection string from your Neon project's");
+    console.error("  Connection Details panel, or run `vercel env pull .env`");
+    console.error("  if the database was added through the Vercel Marketplace.");
+    console.error("  See db/README.md.");
     process.exit(1);
   }
 
@@ -103,7 +92,9 @@ export function requireDatabaseUrl(): { raw: string; url: URL } {
 }
 
 export function clientFor(raw: string): PrismaClient {
-  return new PrismaClient({ adapter: new PrismaMariaDb(poolConfigFromUrl(raw)) });
+  return new PrismaClient({
+    adapter: new PrismaNeon({ connectionString: raw, max: 2, connectionTimeoutMillis: 6_000 }),
+  });
 }
 
 /**
@@ -114,33 +105,14 @@ export async function preflight(prisma: PrismaClient, url: URL): Promise<void> {
   try {
     await prisma.$queryRaw`SELECT 1`;
   } catch (error) {
-    console.error(`  FAIL  Cannot reach the database at ${url.hostname}:${url.port || 3306}`);
+    console.error(`  FAIL  Cannot reach the database at ${url.hostname}`);
     console.error(`        ${error instanceof Error ? error.message : String(error)}`);
     console.error("");
     console.error("  This is a connection problem, not a schema problem. Check that:");
-    console.error("    - the host and port are correct and reachable from this machine");
-    console.error("    - the user, password, and database name are correct");
-    console.error("    - the server accepts connections from this IP");
-    console.error("      (on Railway: Settings -> Networking -> add Public Access)");
+    console.error("    - the connection string was copied whole, including ?sslmode=require");
+    console.error("    - the Neon project is not suspended (open it once in the console)");
+    console.error("    - the password is right — Neon shows it only when the role is created");
     await prisma.$disconnect();
     process.exit(1);
   }
-}
-
-/**
- * Split a .sql file into executable statements.
- *
- * Naive on purpose — it splits on semicolons and strips `--` comments, which is
- * correct only because the files in db/ are authored here and contain no
- * semicolons inside string literals. It is not a general SQL parser and should
- * not be pointed at arbitrary dumps.
- */
-export function statementsIn(sql: string): string[] {
-  return sql
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("--"))
-    .join("\n")
-    .split(";")
-    .map((statement) => statement.trim())
-    .filter((statement) => statement.length > 0);
 }

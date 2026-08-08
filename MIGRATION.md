@@ -1,4 +1,4 @@
-# Migration: PHP + MySQL → Next.js
+# Migration: PHP + MySQL → Next.js + Postgres
 
 Companion to [PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md), which describes the
 original application. This document records what was actually done, what was
@@ -12,7 +12,7 @@ The instruction governing this migration was to keep the application exactly as
 it is — no new features, no improvements, just make sure every function keeps
 working. The scope is therefore a **like-for-like port**:
 
-- Same MySQL database, same tables, same columns. No schema change.
+- Same tables, same column names — including `passw` rather than `password`.
 - Same screens, same labels, same colours, same workflows.
 - Same behaviour, including behaviour that is arguably wrong (see
   [Preserved deliberately](#preserved-deliberately)).
@@ -63,10 +63,10 @@ irreversibly in users' browsers while the migration is being validated.
 
 ## Database
 
-The schema is **unchanged**. Prisma is pointed at the existing tables through
-`@map`, so `User` reads `users` and `Coupon` reads `coupons`.
+Table and column names are **unchanged**. Prisma maps onto them through `@map`,
+so `User` reads `users` and `Coupon` reads `coupons`.
 
-| MySQL | Prisma |
+| Original MySQL | Prisma |
 |---|---|
 | `users.id` | `User.id` |
 | `users.email` | `User.email` |
@@ -75,19 +75,22 @@ The schema is **unchanged**. Prisma is pointed at the existing tables through
 | `coupons.id` | `Coupon.id` |
 | `coupons.coupon_code` | `Coupon.couponCode` |
 
-Two constraints shape this:
+**The engine changed from MySQL to Postgres.** Vercel's storage partners offer
+Postgres, Redis, MongoDB, and SQLite — no MySQL — so staying on MySQL meant
+hosting it elsewhere and reaching it over a public TCP proxy.
 
-**Never migrate.** The `users` table belongs to a signup application that is not
-in this repository — nothing here inserts a user. `prisma migrate dev`,
-`prisma migrate deploy`, and `prisma db push` must never be run against this
-database. The schema file repeats this warning. Only `prisma generate` and
-`prisma db pull` are safe.
+This was originally ruled out (PROJECT_ANALYSIS.md §9, risk 1): a separate signup
+application wrote to `users` over PHP `mysqli`, which cannot talk to Postgres, so
+moving would have orphaned it. That constraint was later confirmed not to apply —
+the deployment is starting fresh, with no data to carry over and no signup
+application to keep in step — and the move became a contained, in-repo change.
+The reasoning is recorded in [db/README.md](db/README.md).
 
-**Every non-key column is nullable** in the schema. The real column definitions
-were inferred from how the PHP used them, not read from a live database. A column
-that turns out to be `NOT NULL` still reads correctly through a nullable model;
-the reverse would throw at runtime. Run `npm run db:pull` against the real
-database to replace the inference with fact.
+**Every non-key column is nullable** in the schema. The definitions were inferred
+from how the PHP used them, not read from a live database, so the permissive
+shape was kept: a column that should be `NOT NULL` still reads correctly through a
+nullable model, while the reverse throws at runtime. `created_at` defaults to the
+insert time, which is what the original writer relied on.
 
 The five database operations are:
 
@@ -137,7 +140,7 @@ this repository, so renaming it would be a guess.
 | Coupon output is escaped | It was echoed raw — a stored XSS that fired on every dashboard load |
 | One guard, `requireAdminPage()` | Three PHP files each had their own slightly different session check |
 | Session identifier regenerates on login | The old code did not, allowing session fixation |
-| Timestamps formatted in UTC, connection pinned to `timezone: "Z"` | MySQL `DATETIME` has no timezone; without this, the same row renders differently locally and on Vercel |
+| Timestamps stored as `timestamptz` and formatted in UTC | MySQL `DATETIME` carried no timezone; without pinning one, the same row renders differently locally and on Vercel |
 | Input validated with Zod on the server | The only validation was `intval()` |
 | Table wrapped in a horizontal scroller | The old dashboard overflowed the viewport on a phone |
 | Duplicate `admin/` tree collapsed | Two identical copies meant every fix had to be made twice |
@@ -171,35 +174,50 @@ Two real bugs were found and fixed this way:
   everywhere else, including local verification. Fixed with `trustHost: true`.
 - **20-second hang on a database outage** — the driver's default retry window
   outlasts Vercel's function limit, so the platform would have timed out before
-  the error page rendered. Fixed with explicit `connectTimeout` / `acquireTimeout`.
+  the error page rendered. Fixed with an explicit connection timeout.
+
+- **`prisma db push` against a pooled endpoint** — it takes a session-level
+  advisory lock, which PgBouncer in transaction mode cannot hold, so the command
+  can hang. The CLI now prefers `DIRECT_URL` while the app keeps the pooled one.
 
 ## Not verified
 
-**No database was reachable during the migration** — there is no MySQL, MariaDB,
+**No database was reachable during the migration** — there is no Postgres, MySQL,
 or Docker on the machine this was built on. The five operations listed above are
 implemented and type-checked, but none has been executed against a real database.
 
 This is the reason `legacy-php/` still exists. Do not delete it until the
 checklist below passes.
 
-### Checklist to run against the real database
+### Checklist to run against a real database
+
+Set up a database first — see [db/README.md](db/README.md).
+
+```bash
+npm run db:init
+```
+
+```bash
+npm run db:seed
+```
 
 ```bash
 npm run verify:db
 ```
 
-That covers the three reads without writing anything — it is deliberately
-read-only, because the tables' storage engine is unknown and a rollback cannot be
-relied on if they are MyISAM.
+`verify:db` covers the three reads without writing anything. The writes are
+exercised through the UI instead, because those paths include the authorization
+guard and the cache revalidation that a direct query would skip:
 
-Then, manually, in a staging copy of the database if one exists:
-
-1. Sign in. The users table lists the same rows in the same order as the PHP page.
-2. `created_at` renders identically to the PHP output for the same row.
+1. Sign in. The users table lists every row, newest id first.
+2. `created_at` renders as `YYYY-MM-DD HH:MM:SS`, and a row seeded at
+   `2026-01-02T09:15:00Z` shows `2026-01-02 09:15:00` on any machine.
 3. The Last Coupon panel shows the newest coupon, or `No coupon yet` if empty.
-4. Save a coupon. It appears in `coupons` with the code stored exactly as typed.
-5. Delete a user. The row goes, and the other application still behaves.
-6. `GET /api/users/latest` with a session returns `{"last_id":<max id>}`.
+4. Save a coupon. It appears in `coupons` with the code stored exactly as typed,
+   untrimmed, and the panel updates without a manual refresh.
+5. Delete a user. The row goes and the table re-renders.
+6. `GET /api/users/latest` with a session returns `{"last_id":<max id>}`, and
+   without one returns 403 with an empty body.
 
 Only after all six pass should `legacy-php/` be removed.
 

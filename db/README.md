@@ -1,174 +1,169 @@
 # Database setup
 
-The admin panel reads two MySQL tables, `users` and `coupons`. This directory
-holds their schema and the scripts that apply it.
+The admin panel uses two Postgres tables, `users` and `coupons`. Their shape
+lives in [`prisma/schema.prisma`](../prisma/schema.prisma) — that file is the
+single source of truth, and these commands apply it.
 
-| File | Purpose |
+```bash
+npm run db:init     # create the tables (prisma db push)
+```
+
+```bash
+npm run db:seed     # optional: sample rows for local testing
+```
+
+```bash
+npm run verify:db   # confirm the panel's queries work
+```
+
+---
+
+## Why Postgres and not MySQL
+
+The original application was PHP + MySQL. The deployment target is Vercel, and
+Vercel's storage partners offer Postgres, Redis, MongoDB, and SQLite — **no
+MySQL**. Staying on MySQL meant hosting it elsewhere (Railway, PlanetScale,
+Aiven) and reaching it over a public TCP proxy, which costs egress and adds a
+hop that Neon does not need.
+
+The blocker was never this repository — Prisma makes the dialect close to a
+one-line change. It was that a separate signup application wrote to the `users`
+table over PHP `mysqli`, which cannot talk to Postgres. Moving would have
+orphaned it. Once that application was confirmed out of the picture and the
+database was starting fresh, the constraint disappeared and Postgres became the
+better fit for the platform.
+
+---
+
+## Neon via the Vercel Marketplace (recommended)
+
+This path provisions the database and sets the environment variables on the
+Vercel project in one step.
+
+### 1. Add the integration
+
+```bash
+vercel integration add neon
+```
+
+Or from the dashboard: **Storage** → **Create Database** → **Neon**.
+
+It creates the database and adds `DATABASE_URL` (and Neon's other variables) to
+your Vercel project automatically.
+
+### 2. Pull the variables locally
+
+```bash
+vercel env pull .env
+```
+
+Then open `.env` and add the ones Vercel does not provide — `AUTH_SECRET`,
+`ADMIN_USERNAME`, `ADMIN_PASSWORD`. Generate the secret with:
+
+```bash
+npx auth secret
+```
+
+### 3. Add `DIRECT_URL`
+
+Neon gives two hosts for the same database:
+
+| Host | Use |
 |---|---|
-| `schema.sql` | The two tables. Safe to re-run — creates only what is missing. |
-| `seed-dev.sql` | Sample rows for local development. Never for production. |
+| `ep-xxx-**pooler**.region.aws.neon.tech` | the running app → `DATABASE_URL` |
+| `ep-xxx.region.aws.neon.tech` | the Prisma CLI → `DIRECT_URL` |
+
+Copy `DATABASE_URL` into `DIRECT_URL` and delete `-pooler` from the hostname.
+
+This split is not cosmetic. The pooled host runs PgBouncer in transaction mode,
+which does not keep session state between statements, and `prisma db push` takes
+a session-level advisory lock — against the pooled host it can hang. The app
+wants the pooled host for exactly the opposite reason: serverless functions open
+many short-lived connections.
+
+### 4. Create the tables
 
 ```bash
 npm run db:init
 ```
 
-```bash
-npm run verify:db
-```
+This runs `prisma db push`, which reads `prisma/schema.prisma` and creates what
+is missing. Expect `users` and `coupons` to be created.
 
----
-
-## Read this before pointing the panel at a new database
-
-The `users` table is **written by a different application** — the signup site
-that creates the accounts this panel lists. There is no `INSERT INTO users`
-anywhere in this repository (PROJECT_ANALYSIS.md §3).
-
-So a brand-new database starts, and stays, empty. Creating one on Railway does
-not migrate anything, and the dashboard will show zero users until either:
-
-- the signup application is repointed at the same Railway database, **or**
-- the existing production data is imported into it (see *Importing* below).
-
-A fresh Railway database is the right choice for **development and testing**. For
-production, the panel should point at whatever database the signup application
-already writes to.
-
----
-
-## Railway setup
-
-### 1. Create the database
-
-1. In your Railway project: **New** → **Database** → **Add MySQL**.
-2. Wait for it to finish deploying.
-
-### 2. Make it reachable from outside Railway
-
-Railway databases are private by default. Vercel and your own machine are both
-outside the project, so the private host will not resolve for either.
-
-1. Open the MySQL service → **Settings** → **Networking**.
-2. Under **Public Networking**, click **Add Public Access** (it may be
-   labelled *TCP Proxy*).
-3. A `MYSQL_PUBLIC_URL` variable appears on the **Variables** tab.
-
-Public access is billed as network egress. It is required here — a Vercel
-function cannot reach `mysql.railway.internal`.
-
-### 3. Copy the connection string
-
-From the MySQL service's **Variables** tab, copy `MYSQL_PUBLIC_URL`. It looks
-like:
-
-```
-mysql://root:SOMELONGPASSWORD@shuttle.proxy.rlwy.net:31234/railway
-```
-
-Two things to notice, because both are easy to get wrong:
-
-- **The port is not 3306.** The TCP proxy assigns a random high port. Copy it.
-- Use `MYSQL_PUBLIC_URL`, not `MYSQL_URL`. `MYSQL_URL` is the private one and
-  will time out from anywhere except inside that Railway project.
-
-### 4. Put it in `.env`
-
-```
-DATABASE_URL="mysql://root:SOMELONGPASSWORD@shuttle.proxy.rlwy.net:31234/railway"
-```
-
-If the password contains `@`, `/`, `:`, or `#`, percent-encode it
-(`@` → `%40`), otherwise the URL parses wrongly.
-
-### 5. Create the tables
-
-```bash
-npm run db:init
-```
-
-Expected output:
-
-```
-Applying db/schema.sql to shuttle.proxy.rlwy.net:31234/railway
-
-  OK    users
-  OK    coupons
-
-users:   0 row(s)
-coupons: 0 row(s)
-```
-
-### 6. Confirm the panel's queries work
+### 5. Confirm the panel's queries work
 
 ```bash
 npm run verify:db
 ```
 
-All three read checks should pass. This is the check that has been outstanding
-since the migration — it is what proves the Prisma layer reproduces what the PHP
-did (MIGRATION.md).
+All three read checks must pass. This is the check that has been outstanding
+since the migration began — it is what proves the Prisma layer reproduces what
+the PHP did. See [MIGRATION.md](../MIGRATION.md).
 
-### 7. Optional — sample rows for local testing
+### 6. Optional — sample rows
 
 ```bash
 npm run db:seed
 ```
 
 Adds three fake users and two coupons so the dashboard has something to render.
-It refuses to run if the tables already contain rows, so it cannot pollute real
-data.
+An empty table cannot tell you whether the table, the delete button, and the
+timestamp formatting actually work. It refuses to run if the tables already
+contain rows.
 
-### 8. Add it to Vercel
+---
 
-Vercel does not read `.env`. Add the same value there:
+## Neon without Vercel
+
+1. Create a project at [neon.tech](https://neon.tech).
+2. From **Connection Details**, copy the connection string.
+3. Put the pooled one in `DATABASE_URL` and the unpooled one in `DIRECT_URL`
+   (see the table above).
+4. Add `AUTH_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` to `.env`.
+5. Run `npm run db:init`, then `npm run verify:db`.
+
+Any Postgres works — Supabase, a local server, anything. Only the connection
+string changes. If your server has no pooled/unpooled split, leave `DIRECT_URL`
+unset and the CLI falls back to `DATABASE_URL`.
+
+---
+
+## Deploying
+
+Vercel does not read `.env`. If you did not use the Marketplace integration, set
+the variables on the project:
 
 ```bash
 vercel env add DATABASE_URL production
 ```
 
-Or paste it under **Project** → **Settings** → **Environment Variables**. Do the
-same for `AUTH_SECRET`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
+Repeat for `AUTH_SECRET`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`. `DIRECT_URL`
+is only needed where the Prisma CLI runs; the build only calls `prisma generate`,
+which needs no database.
 
 ---
 
-## Importing existing production data
+## Where the rows come from
 
-To move the live data into Railway, dump it from the current host and load it in:
+This panel **lists and deletes** users. It never creates them — there is no
+`INSERT INTO users` anywhere in this repository, and there wasn't in the PHP
+either (PROJECT_ANALYSIS.md §3). Accounts came from a separate signup
+application.
 
-```bash
-mysqldump -h CURRENT_HOST -u CURRENT_USER -p CURRENT_DB users coupons > backup.sql
-```
+So a fresh database starts empty and stays empty until something writes to it.
+That is expected, not a bug. Use `npm run db:seed` to put rows in for testing.
 
-```bash
-mysql -h shuttle.proxy.rlwy.net -P 31234 -u root -p railway < backup.sql
-```
-
-Use the real host and port from your `MYSQL_PUBLIC_URL`. After importing, run
-`npm run verify:db` again — the row counts should match the old site.
-
-Remember that the signup application must then also be repointed at Railway, or
-it will keep writing new accounts to the old database and this panel will stop
-seeing them.
-
----
-
-## Why the columns allow NULL
-
-`schema.sql` declares `email`, `passw`, and `created_at` as nullable. This is
-deliberate, not an oversight: the application that inserts users is not in this
-repository, so its `INSERT` statement cannot be inspected. `NOT NULL` could
-reject a write it has always been permitted to make. `created_at` defaults to the
-insert time so a writer that omits it still produces the timestamp the dashboard
-displays.
-
-Tighten the constraints once that application's `INSERT` is known.
+If a signup flow is added later, it writes to the same `users` table: `email`,
+`passw`, and `created_at` (which defaults to the insert time).
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| `pool timeout ... active=0 idle=0` | Nothing is listening. Public access not enabled, or the private host/port was used. |
-| `ENOTFOUND` | Hostname is wrong — check it came from `MYSQL_PUBLIC_URL`. |
-| `Access denied` | Wrong user or password, or an unencoded special character in the password. |
-| `Unknown database` | The name after the last `/` is wrong. Railway's default is `railway`, not the old database name. |
+| `DATABASE_URL is not a Postgres connection string` | Still the old `mysql://` URL. Replace it with the Neon one. |
 | `DATABASE_URL has not been filled in` | `.env` still holds the `.env.example` template. |
+| `password authentication failed` | Wrong password, or the string was truncated when copied. |
+| `database ... does not exist` | Wrong name after the last `/`. Neon's default is `neondb`. |
+| Connection times out | Neon projects on the free tier suspend when idle. Open the project once in the console, then retry. |
+| `db:init` hangs | `DIRECT_URL` is unset or still points at the `-pooler` host. |
+| Dashboard shows no users | Expected on a fresh database — nothing inserts users. Run `npm run db:seed`. |

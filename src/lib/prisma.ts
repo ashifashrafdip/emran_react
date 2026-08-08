@@ -1,5 +1,5 @@
 import "server-only";
-import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+import { PrismaNeon } from "@prisma/adapter-neon";
 import { PrismaClient } from "@/generated/prisma/client";
 import { env } from "./env";
 
@@ -12,49 +12,25 @@ import { env } from "./env";
  * with a new pool per reload.
  */
 
-/**
- * Build a mariadb pool config from the DATABASE_URL.
- *
- * The connection string could be handed to the adapter directly, but building
- * the config explicitly is what allows the two settings below to be set.
- */
-function buildPoolConfig() {
-  const url = new URL(env.DATABASE_URL);
-
-  return {
-    host: url.hostname,
-    port: url.port ? Number(url.port) : 3306,
-    user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: url.pathname.replace(/^\//, ""),
-
-    // MySQL DATETIME columns carry no timezone. Pinning the connection to UTC
-    // makes the driver interpret `users.created_at` consistently regardless of
-    // whether the code runs on a local machine or on Vercel (whose runtime is
-    // UTC). Paired with the UTC formatter in `lib/format.ts`, the timestamp
-    // rendered in the dashboard is byte-identical to the one the PHP page
-    // printed. Without this, the same row would display a different time
-    // locally than in production.
-    timezone: "Z",
+function createPrismaClient() {
+  const adapter = new PrismaNeon({
+    connectionString: env.DATABASE_URL,
 
     // Serverless functions scale horizontally, so each instance should hold a
     // small pool. A large pool per instance multiplies across concurrent
-    // invocations and exhausts MySQL's max_connections.
-    connectionLimit: 5,
+    // invocations and exhausts the database's connection limit. Neon's pooled
+    // endpoint (the `-pooler` host) does the real multiplexing; this just keeps
+    // any single instance from hoarding.
+    max: 5,
 
-    // Fail fast when the database is unreachable. The driver's defaults retry
-    // pool acquisition for 10s on top of the connect attempt, so an outage took
-    // over 20s to surface — longer than a Vercel function is allowed to run, so
-    // the platform timeout would fire before the error page could render. PHP's
-    // mysqli_connect() gave up in about a second, so failing quickly is also
-    // what the original app did.
-    connectTimeout: 5_000,
-    acquireTimeout: 6_000,
-  } as const;
-}
+    // Fail fast when the database is unreachable. Without a bound, an outage
+    // outlives the Vercel function's own limit, so the platform timeout fires
+    // before the error page can render and the user sees nothing useful.
+    // PHP's mysqli_connect() gave up in about a second, so failing quickly is
+    // also what the original app did.
+    connectionTimeoutMillis: 6_000,
+  });
 
-function createPrismaClient() {
-  const adapter = new PrismaMariaDb(buildPoolConfig());
   return new PrismaClient({ adapter });
 }
 

@@ -1,17 +1,15 @@
 /**
  * Read-only verification of the database layer.
  *
- * The migration was developed without access to the live MySQL server, so every
- * query below is written against the inferred schema in prisma/schema.prisma.
- * This script runs each of them against whatever DATABASE_URL points at and
- * reports the result, so the mapping can be confirmed in one command:
+ * Each check below is the Prisma replacement for one query the PHP application
+ * ran. Running them all against whatever DATABASE_URL points at confirms in one
+ * command that the rewritten data layer reproduces the original behaviour:
  *
  *     npm run verify:db
  *
- * It performs NO writes. Inserting or deleting is deliberately left to manual
- * testing through the UI, because the `users` and `coupons` tables are shared
- * with another application (PROJECT_ANALYSIS.md §3) and their storage engine is
- * unknown — a transaction rollback would not be reliable on MyISAM.
+ * It performs NO writes. Deleting a user and saving a coupon are exercised
+ * through the UI instead, because those paths include the authorization guard
+ * and the revalidation that a direct query would skip — see MIGRATION.md.
  */
 import "dotenv/config";
 

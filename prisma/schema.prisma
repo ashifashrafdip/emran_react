@@ -1,21 +1,31 @@
 // Prisma schema for the Emran admin panel.
 //
-// IMPORTANT — READ BEFORE RUNNING ANY PRISMA COMMAND
+// This is the single source of truth for the database shape. Apply it with:
 //
-// This schema maps onto an EXISTING MySQL database that is ALSO written to by a
-// separate application (the one that creates user signups and consumes coupons).
-// That application is not part of this repository. See PROJECT_ANALYSIS.md §3.
+//     npm run db:init      (prisma db push)
 //
-// Therefore:
-//   - Run `npx prisma generate`  — safe, only builds the TypeScript client.
-//   - Run `npx prisma db pull`   — safe, reads the real schema into this file.
-//   - Do NOT run `prisma migrate dev` / `migrate deploy` / `db push`.
-//     Those would attempt to ALTER the live tables that the other app depends on.
+// HISTORY — WHY THE SHAPE LOOKS LIKE THIS
 //
-// The field types below were inferred from the PHP queries, not from the live
-// database. Nullability is declared permissively (`?`) on every non-key column so
-// that reads cannot crash if the real column happens to be NULLable. Confirm the
-// real shape with `npx prisma db pull` before relying on it.
+// The application was migrated from PHP + MySQL. The original shipped no schema
+// file and no migrations, so these models were reconstructed from the queries the
+// PHP code issued (PROJECT_ANALYSIS.md §4):
+//
+//   users    dashboard.php:17      SELECT * FROM users ORDER BY id DESC
+//            dashboard.php:46-49   reads id, email, passw, created_at
+//            delete_user.php:6     DELETE FROM users WHERE id = ...
+//            check_new_user.php:9  SELECT MAX(id) AS last_id FROM users
+//   coupons  dashboard.php:13      INSERT INTO coupons (coupon_code) VALUES ...
+//            dashboard.php:20      SELECT * FROM coupons ORDER BY id DESC LIMIT 1
+//
+// Table and column names are kept exactly as the PHP used them — including
+// `passw` rather than `password` — so that a PHP instance and this app can read
+// the same database during a cutover.
+//
+// The datasource moved from MySQL to Postgres because the deployment target is
+// Vercel, whose storage partners offer Postgres and no MySQL. That was only
+// possible once the database was confirmed to be starting fresh: an earlier
+// constraint, that a separate signup application wrote to `users` over mysqli,
+// would have made the change a cross-application rewrite. See db/README.md.
 
 generator client {
   provider = "prisma-client"
@@ -26,27 +36,32 @@ generator client {
 // lives in `prisma.config.ts` (for CLI commands) and is passed to the driver
 // adapter in `src/lib/prisma.ts` (for the running app).
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
 }
 
-/// Maps to the existing `users` table.
-/// This panel only ever reads and deletes rows here — signups are INSERTed by
-/// the sibling application. `SELECT *` in the original PHP means additional
-/// columns may exist that are not modelled here; add them via `prisma db pull`.
+/// Accounts created by the signup flow. This panel lists and deletes them; it
+/// never creates them.
 model User {
-  id        Int       @id @default(autoincrement())
-  email     String?   @db.VarChar(255)
+  id    Int     @id @default(autoincrement())
+  email String? @db.VarChar(255)
+
   /// Plaintext password, preserved exactly as the PHP dashboard displayed it.
-  /// Column is named `passw` in the live database, not `password`.
-  passw     String?   @db.VarChar(255)
-  createdAt DateTime? @map("created_at")
+  /// This is a known security finding, kept deliberately rather than silently
+  /// changed — see PROJECT_ANALYSIS.md §7 finding 2 before touching it.
+  /// The column is named `passw`, not `password`.
+  passw String? @db.VarChar(255)
+
+  /// Second precision with no fractional part, matching the MySQL DATETIME this
+  /// replaced, so the dashboard renders the same `YYYY-MM-DD HH:MM:SS` string
+  /// that the PHP page printed. Rendered in UTC by lib/format.ts.
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz(0)
 
   @@map("users")
 }
 
-/// Maps to the existing `coupons` table.
-/// The original panel only INSERTs a bare code and reads back the newest row.
-/// There is no amount, expiry, or redemption column in the live schema.
+/// Discount codes entered by the admin. The original panel only ever INSERTs a
+/// bare code and reads back the newest row — there is no amount, expiry, or
+/// redemption column, and none was added.
 model Coupon {
   id         Int     @id @default(autoincrement())
   couponCode String? @map("coupon_code") @db.VarChar(255)
