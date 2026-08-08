@@ -33,7 +33,47 @@ function poolConfigFromUrl(raw: string) {
     database: url.pathname.replace(/^\//, ""),
     timezone: "Z",
     connectionLimit: 2,
+
+    // Match src/lib/prisma.ts. Without these the driver retries for 10s per
+    // query, so an unreachable host cost 30s to report what is knowable at once.
+    connectTimeout: 5_000,
+    acquireTimeout: 6_000,
   };
+}
+
+/**
+ * Reject a DATABASE_URL that was never filled in.
+ *
+ * `.env.example` ships `mysql://user:password@host:3306/database`. Copying it to
+ * `.env` and forgetting to edit it produces a 30s pool timeout that reads like a
+ * schema problem, so the unedited template is caught by name here.
+ */
+function templateFieldsIn(url: URL): string[] {
+  const untouched: Array<[string, string, string]> = [
+    ["host", url.hostname, "host"],
+    ["user", decodeURIComponent(url.username), "user"],
+    ["password", decodeURIComponent(url.password), "password"],
+    ["database", url.pathname.replace(/^\//, ""), "database"],
+  ];
+
+  return untouched
+    .filter(([, actual, placeholder]) => actual.toLowerCase() === placeholder)
+    .map(([field]) => field);
+}
+
+/** True when the failure is "could not reach the server", not "query is wrong". */
+function isConnectionFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    message.includes("pool timeout") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("ENOTFOUND") ||
+    message.includes("ETIMEDOUT") ||
+    message.includes("EAI_AGAIN") ||
+    message.includes("Access denied") ||
+    message.includes("Unknown database")
+  );
 }
 
 type Check = {
@@ -90,14 +130,52 @@ async function main() {
     process.exit(1);
   }
 
-  if (databaseUrl.includes("placeholder")) {
-    console.error("DATABASE_URL still contains the placeholder value from .env.example.");
+  let url: URL;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    console.error("DATABASE_URL is not a valid URL.");
+    console.error("  Expected: mysql://USER:PASSWORD@HOST:3306/DATABASE");
+    process.exit(1);
+  }
+
+  const untouched = templateFieldsIn(url);
+
+  if (databaseUrl.includes("placeholder") || untouched.length > 0) {
+    console.error("DATABASE_URL has not been filled in.");
+    if (untouched.length > 0) {
+      console.error(`  Still set to the .env.example template: ${untouched.join(", ")}`);
+    }
+    console.error("");
+    console.error("  Edit .env with the real credentials for the existing MySQL database:");
+    console.error("    DATABASE_URL=\"mysql://USER:PASSWORD@HOST:3306/DATABASE\"");
+    console.error("");
+    console.error("  They are not in this repository — the original config.php shipped");
+    console.error("  placeholders too. Take them from the live site's hosting panel.");
     process.exit(1);
   }
 
   const prisma = new PrismaClient({ adapter: new PrismaMariaDb(poolConfigFromUrl(databaseUrl)) });
 
+  // Preflight. Every schema check below would report the same connection error
+  // three times over, each after its own timeout, and the summary would blame
+  // the schema for it.
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (error) {
+    console.error(`  FAIL  Cannot reach the database at ${url.hostname}:${url.port || 3306}`);
+    console.error(`        ${error instanceof Error ? error.message : String(error)}`);
+    console.error("");
+    console.error("  This is a connection problem, not a schema problem. Check that:");
+    console.error("    - the host and port are correct and reachable from this machine");
+    console.error("    - the user, password, and database name are correct");
+    console.error("    - the MySQL server allows connections from this IP");
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+
   let failed = 0;
+  let connectionFailure = false;
 
   for (const check of checks) {
     try {
@@ -106,6 +184,7 @@ async function main() {
       console.log(`        ${result}`);
     } catch (error) {
       failed += 1;
+      if (isConnectionFailure(error)) connectionFailure = true;
       console.log(`  FAIL  ${check.name}  (replaces ${check.replaces})`);
       console.log(`        ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -116,8 +195,16 @@ async function main() {
   console.log("");
   if (failed > 0) {
     console.log(`${failed} of ${checks.length} checks failed.`);
-    console.log("A failure usually means a column name or type differs from the inferred schema.");
-    console.log("Run `npx prisma db pull` to replace the guesses with the real shape.");
+
+    if (connectionFailure) {
+      console.log("The connection to the database dropped partway through.");
+      console.log("Fix connectivity first — this says nothing about the schema.");
+    } else {
+      console.log("The database is reachable, so a failure means a column name or type");
+      console.log("differs from the inferred schema in prisma/schema.prisma.");
+      console.log("Run `npx prisma db pull` to replace the guesses with the real shape.");
+    }
+
     process.exit(1);
   }
 
