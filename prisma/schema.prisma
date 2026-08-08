@@ -1,0 +1,55 @@
+// Prisma schema for the Emran admin panel.
+//
+// IMPORTANT — READ BEFORE RUNNING ANY PRISMA COMMAND
+//
+// This schema maps onto an EXISTING MySQL database that is ALSO written to by a
+// separate application (the one that creates user signups and consumes coupons).
+// That application is not part of this repository. See PROJECT_ANALYSIS.md §3.
+//
+// Therefore:
+//   - Run `npx prisma generate`  — safe, only builds the TypeScript client.
+//   - Run `npx prisma db pull`   — safe, reads the real schema into this file.
+//   - Do NOT run `prisma migrate dev` / `migrate deploy` / `db push`.
+//     Those would attempt to ALTER the live tables that the other app depends on.
+//
+// The field types below were inferred from the PHP queries, not from the live
+// database. Nullability is declared permissively (`?`) on every non-key column so
+// that reads cannot crash if the real column happens to be NULLable. Confirm the
+// real shape with `npx prisma db pull` before relying on it.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7 removed `url` from the datasource block. The connection string now
+// lives in `prisma.config.ts` (for CLI commands) and is passed to the driver
+// adapter in `src/lib/prisma.ts` (for the running app).
+datasource db {
+  provider = "mysql"
+}
+
+/// Maps to the existing `users` table.
+/// This panel only ever reads and deletes rows here — signups are INSERTed by
+/// the sibling application. `SELECT *` in the original PHP means additional
+/// columns may exist that are not modelled here; add them via `prisma db pull`.
+model User {
+  id        Int       @id @default(autoincrement())
+  email     String?   @db.VarChar(255)
+  /// Plaintext password, preserved exactly as the PHP dashboard displayed it.
+  /// Column is named `passw` in the live database, not `password`.
+  passw     String?   @db.VarChar(255)
+  createdAt DateTime? @map("created_at")
+
+  @@map("users")
+}
+
+/// Maps to the existing `coupons` table.
+/// The original panel only INSERTs a bare code and reads back the newest row.
+/// There is no amount, expiry, or redemption column in the live schema.
+model Coupon {
+  id         Int     @id @default(autoincrement())
+  couponCode String? @map("coupon_code") @db.VarChar(255)
+
+  @@map("coupons")
+}
