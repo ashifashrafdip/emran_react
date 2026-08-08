@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/**
+ * Design tokens carried over from Bootstrap 5.3.2, which the PHP pages loaded
+ * from a CDN. The values are Bootstrap's own, so the migrated UI keeps the exact
+ * colours the panel had — a dark navbar, a red delete button, a green save
+ * button, and the light-blue info alert — rather than becoming a redesign.
+ */
+@theme {
+  --color-bs-dark: #212529;
+  --color-bs-dark-hover: #1c1f23;
+
+  --color-bs-light: #f8f9fa;
+  --color-bs-muted: #6c757d;
+  --color-bs-border: #dee2e6;
+  --color-bs-input-border: #ced4da;
+
+  --color-bs-danger: #dc3545;
+  --color-bs-danger-hover: #bb2d3b;
+  --color-bs-danger-text: #dc3545;
+
+  --color-bs-success: #198754;
+  --color-bs-success-hover: #157347;
+
+  --color-bs-info-bg: #cff4fc;
+  --color-bs-info-border: #b6effb;
+  --color-bs-info-text: #055160;
+
+  --color-bs-focus: #0d6efd;
+
+  --radius-bs: 0.375rem;
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+}
+
+@layer base {
+  html {
+    /* Stops iOS Safari from auto-zooming the page when a form field is focused. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-white font-sans text-bs-dark antialiased;
+  }
+}

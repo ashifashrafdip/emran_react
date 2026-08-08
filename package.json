@@ -1,0 +1,52 @@
+{
+  "name": "emran-admin-panel",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
+    "verify:db": "tsx scripts/verify-db.ts",
+    "db:pull": "prisma db pull"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ashifashrafdip/emranLeatestv4.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/ashifashrafdip/emranLeatestv4/issues"
+  },
+  "homepage": "https://github.com/ashifashrafdip/emranLeatestv4#readme",
+  "dependencies": {
+    "@prisma/adapter-mariadb": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.30.0",
+    "next": "^16.3.0",
+    "next-auth": "^5.0.0-beta.32",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "dotenv": "^17.4.2",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.0",
+    "postcss": "^8.5.26",
+    "prisma": "^7.9.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.11",
+    "typescript": "^6.0.3"
+  },
+  "private": true
+}
